@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <MSBuildCommunityTasksPath>$(MSBuildThisFileDirectory)\.build</MSBuildCommunityTasksPath>
+    </PropertyGroup>  
+
+    <Import Project="$(MSBuildCommunityTasksPath)\MSBuild.Community.Tasks.Targets" />
+   
+    <PropertyGroup>
+		<RootFolder>$([System.IO.Path]::GetDirectoryName($(MSBuildProjectDirectory)))</RootFolder>
+		<OutputFolder>$(RootFolder)\output</OutputFolder>
+		<OutputCoverageHistoryPath>$(OutputFolder)\coverage_history</OutputCoverageHistoryPath>
+		<OutputCoveragePath>$(OutputFolder)\reports\coverage</OutputCoveragePath>
+		<OutputNUnitPath>$(OutputFolder)\reports\nunit</OutputNUnitPath>
+		<OutputTmpAssembliesPath>$(OutputFolder)\tmp\assemblies</OutputTmpAssembliesPath>
+		
+        <OpenCoverMSBuildTasksPath>$(MSBuildThisFileDirectory)\packages\OpenCover.4.5.3723</OpenCoverMSBuildTasksPath>
+        <NunitPath>$(MSBuildThisFileDirectory)\packages\NUnit.Runners.2.6.3\tools</NunitPath>
+        <NUnitOrangeDir>$(MSBuildThisFileDirectory)\packages\NUnitOrange.2.1\tools</NUnitOrangeDir>
+        <ReportGeneratorDir>$(MSBuildThisFileDirectory)packages\ReportGenerator.2.1.4.0</ReportGeneratorDir>
+    </PropertyGroup>
+
+	
+    <!-- Set Default Configuration=Release if no configuration given-->
+    <PropertyGroup Condition=" '$(Configuration)' == '' ">
+        <Configuration>Release</Configuration>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+        <DebugSymbols>false</DebugSymbols>
+        <DebugType>None</DebugType>
+    </PropertyGroup>
+		
+    <Target Name="Rebuild" DependsOnTargets="Clean;Build" />
+	
+	<Target Name="MakeDirs">
+		<MakeDir Directories="$(OutputFolder)"/>
+		<MakeDir Directories="$(OutputCoverageHistoryPath)"/>
+		<MakeDir Directories="$(OutputCoveragePath)"/>
+		<MakeDir Directories="$(OutputNUnitPath)"/>
+		<MakeDir Directories="$(OutputNUnitPath)"/>
+	</Target>
+	
+    <Target Name="Tests">
+	   	<CreateItem Include=".\**\bin\Release\*.Test.dll">
+            <Output TaskParameter="Include" ItemName="TestAssemblies" />
+        </CreateItem>
+ 
+	    <NUnit ToolPath="$(NunitPath)" 
+            Assemblies="@(TestAssemblies)"
+            Force32Bit="True"
+            OutputXmlfile="$(OutputFolder)\NUnit_testresults.xml"/>
+    </Target>  
+	
+	
+    <Target Name="PrepareCoverage">
+        <!-- OpenCover MsBuild Target can only have one targetworkingdir to find the pdb's. 
+             Our tests are all scattered in the /bin/release folders. OpenCover cannot handle this.
+             To solve this issue all files for coverage are copied to 1 location so opencover can succeed
+        -->
+        
+        <CreateItem Include=".\**\bin\Release\*.*;*.msbuild;.\**\lib\MSBuildTasks\*.dll">
+            <Output TaskParameter="Include" ItemName="AllArtifacts" />
+        </CreateItem>
+        
+		<Copy SourceFiles="@(AllArtifacts)" DestinationFolder="$(OutputTmpAssembliesPath)"/>
+		
+		<CreateItem Include=".\FlexKids.Test\bin\Release\**\*.*">
+            <Output TaskParameter="Include" ItemName="AllArtifacts2" />
+        </CreateItem>
+        
+		<Copy SourceFiles="@(AllArtifacts2)" DestinationFolder="$(OutputTmpAssembliesPath)\%(RecursiveDir)"/>
+		
+		
+                  
+        <CreateItem Include="lib\**\*.*">
+            <Output TaskParameter="Include" ItemName="RequiredTargets"/>
+        </CreateItem>
+		
+        <Copy SourceFiles="@(RequiredTargets)"
+			DestinationFolder="$(OutputTmpAssembliesPath)/Coverage/lib/%(RecursiveDir)"/>
+	</Target>    
+
+
+	<Target Name="ConvertFileNames">
+		<!-- Collect all test assemblies-->
+		<CreateItem Include=".\**\bin\Release\*Test.dll">
+			<Output TaskParameter="Include" ItemName="TestAssembliesFullPath" />
+		</CreateItem>
+    
+		<!-- Strip the fullpath from the names-->
+		<CreateProperty Value="@(TestAssembliesFullPath->'%(filename).dll', ' ')">
+			<Output TaskParameter="Value" PropertyName="FilenamesOnly" />
+		</CreateProperty>
+	</Target>
+  
+  
+    <Target Name="CoverCode" DependsOnTargets="PrepareCoverage;ConvertFileNames">
+		<!-- Execute opencover and execute the Tests msbuild step. 
+             Do codecoverage on all but the Test projects.
+             See https://github.com/opencover/opencover/wiki/Usage#understandingfilters on filters
+		-->   
+       <Exec Command='"$(OpenCoverMSBuildTasksPath)\OpenCover.Console.exe" -target:"$(NunitPath)\nunit-console-x86.exe" -targetargs:"$(FilenamesOnly) /xml=$(OutputFolder)\NUnitReport.xml" -targetdir:$(OutputTmpAssembliesPath) -mergebyhash -output:"$(OutputCoveragePath)\coverageresults.xml" -register:path32 -filter:"+[*]* -[*.Test]* -[HtmlAgilityPack]*"'>
+
+       </Exec>
+    </Target>
+
+    <Target Name="Reports" DependsOnTargets="Rebuild;MakeDirs;Tests;CoverCode">
+       <Exec Command='"$(ReportGeneratorDir)\ReportGenerator.exe" "-reports:$(OutputCoveragePath)\coverageresults.xml" "-targetdir:$(OutputCoveragePath)" "-historydir:$(OutputCoverageHistoryPath)\"' />
+       <Exec Command='"$(NUnitOrangeDir)\NUnitOrange.exe" $(OutputFolder)\NUnitReport.xml $(OutputNUnitPath)\TestResult.html' />
+	   <Exec Command='"$(NUnitOrangeDir)\NUnitOrange.exe" $(OutputFolder)\NUnit_testresults.xml $(OutputNUnitPath)\NUnit_testresults.xml.html' />
+    </Target>	
+	
+    <Target Name="Build" DependsOnTargets="Clean">
+        <Message Text="Starting to Build Configuration=$(Configuration),DebugSymbols=$(DebugSymbols), DebugType=$(DebugType)"/>
+        <MSBuild Projects="KseFlexKids.sln" Properties="Configuration=$(Configuration)"/>
+      <!--  <CallTarget Targets="ToolVersionInfo" />  -->
+    </Target>
+	
+    <Target Name="Clean">
+        <MSBuild Targets="Clean" Projects="KseFlexKids.sln" />
+        <RemoveDir Directories="$(OutputTmpAssembliesPath)" />
+		<Message Text="path: $(MSBuildBinPath)"/>
+    </Target>
+	
+</Project>
